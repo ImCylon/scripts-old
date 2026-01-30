@@ -1,0 +1,53 @@
+#!/bin/bash
+
+# NOTE: Caminho do banco de dados do Anki (usuário padrão)
+DB_PATH="$HOME/.local/share/Anki2/imcylon/collection.anki2"
+
+# Verifica se o Anki está aberto
+if pgrep -x "anki" > /dev/null; then
+    echo "Anki está aberto — nenhuma notificação enviada."
+    exit 0
+fi
+
+# NOTE: Calcular a pohha do due
+REF_DATE_SECONDS=946684800 # 2000-01-01 00:00:00 UTC
+CURRENT_SECONDS=$(date +%s)
+LOCAL_UTM=-3 #Brazil -03 
+SECONDS_IN_HOUR=3600
+UTM_CORRECTION=$(echo "($LOCAL_UTM * $SECONDS_IN_HOUR)" | bc)
+TODAY_DAYS_UNIVERSAL=$(echo "scale=10; ($CURRENT_SECONDS + $UTM_CORRECTION - $REF_DATE_SECONDS ) / 86400" | bc)
+CRT_SECONDS=$(sqlite3 "$DB_PATH" "SELECT crt FROM col;")
+CRT_DAYS_UNIVERSAL=$(echo "($CRT_SECONDS - $REF_DATE_SECONDS) / 86400" | bc)
+DUE_HOJE=$(echo "$TODAY_DAYS_UNIVERSAL - $CRT_DAYS_UNIVERSAL" | bc)
+
+
+echo "Valor de referencia base do anki em segundos(2000-01-01 00:00:00 UTC)" $REF_DATE_SECONDS
+echo "Timestamp em segundos:" $CURRENT_SECONDS
+echo "Correção para UTM local:" $LOCAL_UTM
+echo "Segundos em 1 hora:" $SECONDS_IN_HOUR
+echo "Valor de correção da UTM em segundos:" $UTM_CORRECTION
+echo "Dias corridos no calendario do anki:" $TODAY_DAYS_UNIVERSAL
+echo "Data de criação do DB anki(segundos):" $CRT_SECONDS
+echo "Data de criação do DB anki(dias):" $CRT_DAYS_UNIVERSAL
+echo "DUE de HOJE:" $DUE_HOJE
+
+
+
+# NOTE: Consulta os cartões diretamente do banco
+RESULT=$(sqlite3 "$DB_PATH" "
+SELECT
+    (SELECT COUNT(*) FROM cards WHERE queue=0) AS new_cards,
+    (SELECT COUNT(*) FROM cards WHERE queue=1) AS learning_cards,
+    (SELECT COUNT(*) FROM cards WHERE queue IN (2,3) AND due <= $DUE_HOJE) AS review_cards;
+")
+
+
+# NOTE: Quebra o resultado em variáveis
+IFS='|' read -r NEW LEARNING REVIEW <<< "$RESULT"
+
+# Mostra no terminal
+echo "Novos: $NEW | Aprendendo: $LEARNING | Revisão: $REVIEW"
+
+# NOTE: Envia notificação via DBus (se o Anki estiver fechado)
+notify-send "Anki Hoje" "Novos: $NEW\nAprendendo: $LEARNING\nRevisão: $REVIEW"
+
